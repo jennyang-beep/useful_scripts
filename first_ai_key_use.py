@@ -1,16 +1,20 @@
-from anthropic import Anthropic
 import os
+from openai import OpenAI
 
-client = Anthropic(
-    api_key=os.environ["ANTHROPIC_API_KEY"],
-    base_url=os.getenv("ANTHROPIC_ENDPOINT", "https://api.anthropic.com"),
-    default_headers={"anthropic-version": os.getenv("ANTHROPIC_VERSION", "2023-06-01")}
+client = OpenAI(
+    base_url="https://inference-api.nvidia.com/v1",
+    api_key=os.environ["API_KEY"],
 )
 
-resp = client.messages.create(
-    model=os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4"),
-    max_tokens=256,
-    messages=[{"role": "user", "content": "Status ping from my service"}],
-    metadata={"workspace": "my-workspace", "service": "my-api"}
+completion = client.chat.completions.create(
+    model="azure/anthropic/claude-opus-4-6",   # ✅ Claude Opus 4.6 via Azure
+    messages=[{"role": "user", "content": "Write a limerick about the wonders of GPU computing."}],
+    temperature=0.2,
+    max_tokens=1024,
+    stream=True
 )
-print(resp.content[0].text)
+
+for chunk in completion:
+    if chunk.choices[0].delta.content is not None:
+        print(chunk.choices[0].delta.content, end="")
+    
