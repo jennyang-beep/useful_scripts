@@ -52,6 +52,11 @@ benches:
   # Useful as --http_server_bench when you want to host the ISO from one
   # of these machines while updating a BF4 elsewhere.
 
+  sw-mtx-perf-003:
+    host: sw-mtx-perf-003.mtx.nbulabs.nvidia.com               # 10.9.156.31
+    host_user: root
+    host_pass: 3tango
+
   sw-mtx-062:
     host: sw-mtx-062.mtx.nbulabs.nvidia.com                    # 10.9.153.27
     host_user: root
