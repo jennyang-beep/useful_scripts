@@ -164,24 +164,38 @@ def burn_dpu_personality(
     quoted_url = shlex.quote(fw_bin_url)
     quoted_bin = shlex.quote(bin_name)
     quoted_mst = shlex.quote(mst_device)
+    remote_bin_path = f"{workdir.rstrip('/')}/{bin_name}"
+    quoted_remote_bin = shlex.quote(remote_bin_path)
 
     with ssh_session(host, user, password) as client:
         log.info("=== Step 1/3: ensure %s exists ===", workdir)
         run(client, f"mkdir -p {quoted_workdir}", timeout=30).check()
 
         log.info("=== Step 2/3: download DPU-personality firmware ===")
-        # `wget -nc` short-circuits if the file is already present; we
-        # cd first so the file lands in <workdir>.
-        wget_cmd = (
-            f"cd {quoted_workdir} && "
-            f"wget --no-clobber --progress=dot:giga {quoted_url}"
+        # Skip the download entirely if the .bin is already staged in workdir.
+        existing = run(
+            client,
+            f"test -f {quoted_remote_bin}",
+            timeout=30,
+            stream=False,
         )
-        result = run(client, wget_cmd, timeout=60 * 30)
-        # `wget -nc` exits 1 when the file already exists; treat that as success.
-        if result.exit_code != 0 and "already there" not in result.stderr.lower():
-            raise HostOpsError(
-                f"wget failed (exit {result.exit_code}):\n{result.stderr}"
+        if existing.exit_code == 0:
+            log.info(
+                "%s already present in %s; skipping wget.",
+                bin_name,
+                workdir,
             )
+        else:
+            wget_cmd = (
+                f"cd {quoted_workdir} && "
+                f"wget --no-clobber --progress=dot:giga {quoted_url}"
+            )
+            result = run(client, wget_cmd, timeout=60 * 30)
+            # `wget -nc` exits 1 when the file already exists; treat that as success.
+            if result.exit_code != 0 and "already there" not in result.stderr.lower():
+                raise HostOpsError(
+                    f"wget failed (exit {result.exit_code}):\n{result.stderr}"
+                )
 
         log.info("=== Step 3/3: burn firmware via flint ===")
         flint_cmd = (

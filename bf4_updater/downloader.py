@@ -70,10 +70,10 @@ def download(
 ) -> DownloadResult:
     """Download ``url`` into ``dest_dir``.
 
+    - Skips the download entirely (no HTTP request at all) if the final
+      file already exists locally. When ``expected_sha256`` is given the
+      cached file's sha256 is verified; on mismatch it is redownloaded.
     - Resumes via HTTP Range if a partial ``<file>.part`` exists.
-    - Skips the download entirely if the final file already exists and
-      its size matches the server's ``Content-Length`` (and, if given,
-      its sha256 matches ``expected_sha256``).
     - Verifies sha256 after download when ``expected_sha256`` is set.
     """
 
@@ -84,19 +84,32 @@ def download(
 
     sess = session or make_session(verify=verify_tls)
 
-    remote_size = _head_content_length(sess, url)
-
-    if final_path.exists() and remote_size is not None and final_path.stat().st_size == remote_size:
-        sha = _sha256_file(final_path) if expected_sha256 else None
-        if expected_sha256 and sha != expected_sha256:
+    # Fast path: trust an already-staged file and skip the network entirely.
+    # Saves a HEAD round-trip and avoids re-downloading multi-GB artifacts
+    # when HEAD fails (e.g. no Content-Length from the NFS mirror).
+    if final_path.exists():
+        existing_size = final_path.stat().st_size
+        if expected_sha256:
+            sha = _sha256_file(final_path)
+            if sha == expected_sha256:
+                log.info(
+                    "Already downloaded (sha256 verified): %s (%d bytes); skipping HTTP fetch.",
+                    final_path, existing_size,
+                )
+                return DownloadResult(final_path, existing_size, sha, reused=True)
             log.warning(
                 "Existing %s has wrong sha256 (%s != %s); redownloading.",
                 final_path.name, sha, expected_sha256,
             )
             final_path.unlink()
         else:
-            log.info("Already downloaded: %s (%d bytes)", final_path, final_path.stat().st_size)
-            return DownloadResult(final_path, final_path.stat().st_size, sha, reused=True)
+            log.info(
+                "Already downloaded: %s (%d bytes); skipping HTTP fetch.",
+                final_path, existing_size,
+            )
+            return DownloadResult(final_path, existing_size, None, reused=True)
+
+    remote_size = _head_content_length(sess, url)
 
     headers = {}
     mode = "wb"
