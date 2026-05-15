@@ -1,21 +1,28 @@
 """Push a BF4 PLDM ``.fwpkg`` to the BMC via Redfish UpdateService.
 
-NVIDIA OpenBMC for BlueField exposes a multipart push endpoint:
+This module mirrors the working manual command::
 
-    POST https://<bmc>/redfish/v1/UpdateService
+    curl -k -u admin:'Nvidia_12345!' \\
+        https://<bmc>/redfish/v1/UpdateService/update-multipart \\
+        -F 'UpdateParameters={};type=application/octet-stream' \\
+        -F UpdateFile=@<file>.fwpkg
 
-with a multipart body of:
+i.e. a multipart POST to ``/redfish/v1/UpdateService/update-multipart``
+with two parts:
 
-    UpdateParameters : application/json with {"Targets": [], "@Redfish.OperationApplyTime": "Immediate"}
-    UpdateFile       : application/octet-stream (the .fwpkg)
+  * ``UpdateParameters`` : literal ``{}``, ``Content-Type:
+    application/octet-stream``, no ``filename`` in Content-Disposition.
+  * ``UpdateFile``       : the ``.fwpkg``, ``Content-Type:
+    application/octet-stream``, ``filename="<name>.fwpkg"``.
 
-A successful submission returns ``202 Accepted`` and a ``Location`` header
-pointing at a Task in ``/redfish/v1/TaskService/Tasks/<id>``. We poll the
-task until it transitions out of ``Running`` / ``New`` / ``Pending``.
+A successful submission returns ``202 Accepted`` and a ``Location``
+header pointing at a Task in ``/redfish/v1/TaskService/Tasks/<id>``.
+We poll the task until it transitions out of ``Running`` / ``New`` /
+``Pending``.
 
 TLS verification is intentionally disabled because BMCs ship with
-self-signed certificates; we suppress the resulting urllib3 warning but
-log a one-time notice so it's still visible.
+self-signed certificates; we suppress the resulting urllib3 warning
+but log a one-time notice so it's still visible.
 """
 
 from __future__ import annotations
@@ -25,7 +32,7 @@ import logging
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Optional
 from urllib.parse import urljoin
 
 import requests
@@ -65,7 +72,6 @@ def push_firmware(
     bmc_pass: str,
     fwpkg_path: Path,
     *,
-    apply_time: str = "Immediate",
     poll_interval: float = 5.0,
     overall_timeout: float = 60 * 60,  # 1 hour
     show_progress: bool = True,
@@ -81,7 +87,7 @@ def push_firmware(
     base = _base_url(bmc_host)
     session = _session(bmc_user, bmc_pass)
 
-    update_uri = urljoin(base, "/redfish/v1/UpdateService")
+    update_uri = urljoin(base, "/redfish/v1/UpdateService/update-multipart")
     fwpkg_path = Path(fwpkg_path)
     if not fwpkg_path.is_file():
         raise RedfishError(f"Firmware file not found: {fwpkg_path}")
@@ -89,7 +95,7 @@ def push_firmware(
     log.info("Pushing %s to %s (%.1f MiB)",
              fwpkg_path.name, update_uri, fwpkg_path.stat().st_size / (1024 * 1024))
 
-    task_uri = _post_multipart(session, update_uri, fwpkg_path, apply_time, show_progress)
+    task_uri = _post_multipart(session, update_uri, fwpkg_path, show_progress)
 
     log.info("Task started: %s", task_uri)
     return _poll_task(session, base, task_uri, poll_interval, overall_timeout)
@@ -99,29 +105,18 @@ def _post_multipart(
     session: requests.Session,
     update_uri: str,
     fwpkg_path: Path,
-    apply_time: str,
     show_progress: bool,
 ) -> str:
-    params = {
-        "Targets": [],
-        "@Redfish.OperationApplyTime": apply_time,
-    }
-
+    # Match the working curl exactly:
+    #   -F 'UpdateParameters={};type=application/octet-stream'
+    #   -F UpdateFile=@<file>.fwpkg
     fh = open(fwpkg_path, "rb")
     try:
         encoder = MultipartEncoder(
-            fields={
-                "UpdateParameters": (
-                    "UpdateParameters.json",
-                    json.dumps(params),
-                    "application/json",
-                ),
-                "UpdateFile": (
-                    fwpkg_path.name,
-                    fh,
-                    "application/octet-stream",
-                ),
-            }
+            fields=[
+                ("UpdateParameters", (None, "{}", "application/octet-stream")),
+                ("UpdateFile", (fwpkg_path.name, fh, "application/octet-stream")),
+            ]
         )
 
         progress = None
@@ -291,5 +286,3 @@ def _warn_tls_once() -> None:
     _TLS_WARNED = True
 
 
-def _normalize_apply_time(value: str) -> Tuple[str, ...]:  # pragma: no cover - reserved for future
-    return (value,)

@@ -54,10 +54,10 @@ cp benches.example.yaml benches.yaml
 Use as `--bf4` (firmware target) and/or `--http_server_bench`. Lab
 BMC creds: `admin` / `Nvidia_12345!`.
 
-| Bench name              | BF4 host (DOCA)                                         | BMC                                                          |
-| ----------------------- | ------------------------------------------------------- | ------------------------------------------------------------ |
-| `sw-mtx-perf-003-bf4`   | `10.9.156.23`                                           | `10.9.156.24`                                                |
-| `sw-mtx-062-bf4`        | `sw-mtx-062-bf4.mtx.nbulabs.nvidia.com` (`10.9.153.44`) | `sw-mtx-062-bf4-bmc.mtx.nbulabs.nvidia.com` (`10.9.153.24`)  |
+| Bench name              | BF4 host (DOCA)                                                  | BMC                                                                   |
+| ----------------------- | ---------------------------------------------------------------- | --------------------------------------------------------------------- |
+| `sw-mtx-perf-003-bf4`   | `sw-mtx-perf-003-bf4.mtx.nbulabs.nvidia.com` (`10.9.156.23`)     | `sw-mtx-perf-003-bf4-bmc.mtx.nbulabs.nvidia.com` (`10.9.156.24`)      |
+| `sw-mtx-062-bf4`        | `sw-mtx-062-bf4.mtx.nbulabs.nvidia.com` (`10.9.153.44`)          | `sw-mtx-062-bf4-bmc.mtx.nbulabs.nvidia.com` (`10.9.153.24`)           |
 
 ### Host-only benches (no BF4 attached)
 
@@ -66,12 +66,12 @@ ISO from while updating a BF4 elsewhere. Lab SSH creds: `root` /
 `3tango` (recorded in the YAML for reference; the script doesn't SSH
 into them today).
 
-| Bench name      | Host                                       |
-| --------------- | ------------------------------------------ |
-| `sw-mtx-062`    | `sw-mtx-062.mtx.nbulabs.nvidia.com`        |
-| `sw-mtx-063`    | `sw-mtx-063.mtx.nbulabs.nvidia.com`        |
-| `sw-mtx-047`    | `sw-mtx-047.mtx.nbulabs.nvidia.com`        |
-| `sw-mtx-048`    | `sw-mtx-048.mtx.nbulabs.nvidia.com`        |
+| Bench name      | Host                                                       |
+| --------------- | ---------------------------------------------------------- |
+| `sw-mtx-062`    | `sw-mtx-062.mtx.nbulabs.nvidia.com` (`10.9.153.27`)        |
+| `sw-mtx-063`    | `sw-mtx-063.mtx.nbulabs.nvidia.com` (`10.9.153.207`)       |
+| `sw-mtx-047`    | `sw-mtx-047.mtx.nbulabs.nvidia.com` (`10.9.151.104`)       |
+| `sw-mtx-048`    | `sw-mtx-048.mtx.nbulabs.nvidia.com` (`10.9.151.105`)       |
 
 Host-only entries are rejected if you try to use them as `--bf4`
 (they have no BMC info).
@@ -179,8 +179,10 @@ Press `Ctrl+C` when done to stop the HTTP server.
 3. Download the package into `downloads/firmware/` (resumable,
    checksum-verified if the Artifactory metadata exposes a sha256).
 4. POST it as a multipart upload to
-   `https://<bmc>/redfish/v1/UpdateService` with
-   `OperationApplyTime: Immediate` (override with `--apply-time OnReset`).
+   `https://<bmc>/redfish/v1/UpdateService/update-multipart` with
+   exactly the same body shape as the canonical curl one-liner
+   (`UpdateParameters={}` + `UpdateFile=@...fwpkg`, both
+   `application/octet-stream`).
 5. Follow the `Location` header to the Task and poll every 5s,
    logging `PercentComplete` until the task ends.
 6. Exit non-zero if the task ends in any state other than `Completed`

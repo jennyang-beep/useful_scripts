@@ -28,21 +28,23 @@
 #   bmc_fqdn    : alternate FQDN for the BMC  (overrides `bmc_host` when present)
 #   host_user   : SSH username for the host (not used by the script today)
 #   host_pass   : SSH password for the host (not used by the script today)
+#
+# All hosts use DNS names; the resolved IP at the time of writing is
+# kept as a trailing comment for reference (verified via dig + ping).
 
 benches:
 
   # --- BF4 benches (have a connected BlueField-4) --------------------------
 
   sw-mtx-perf-003-bf4:
-    # No FQDN known yet; replace with a DNS name when available.
-    host: sw-mtx-perf-003-bf4.mtx.nbulabs.nvidia.com             # BF4 Arm host
-    bmc_host: sw-mtx-perf-003-bf4-bmc.mtx.nbulabs.nvidia.com             # BF4 BMC
+    host: sw-mtx-perf-003-bf4.mtx.nbulabs.nvidia.com           # 10.9.156.23
+    bmc_host: sw-mtx-perf-003-bf4-bmc.mtx.nbulabs.nvidia.com   # 10.9.156.24
     bmc_user: admin
     bmc_pass: "Nvidia_12345!"
 
   sw-mtx-062-bf4:
-    host: sw-mtx-062-bf4.mtx.nbulabs.nvidia.com           # 10.9.153.44
-    bmc_host: sw-mtx-062-bf4-bmc.mtx.nbulabs.nvidia.com   # 10.9.153.24
+    host: sw-mtx-062-bf4.mtx.nbulabs.nvidia.com                # 10.9.153.44
+    bmc_host: sw-mtx-062-bf4-bmc.mtx.nbulabs.nvidia.com        # 10.9.153.24
     bmc_user: admin
     bmc_pass: "Nvidia_12345!"
 
@@ -51,21 +53,21 @@ benches:
   # of these machines while updating a BF4 elsewhere.
 
   sw-mtx-062:
-    host: sw-mtx-062.mtx.nbulabs.nvidia.com
+    host: sw-mtx-062.mtx.nbulabs.nvidia.com                    # 10.9.153.27
     host_user: root
     host_pass: 3tango
 
   sw-mtx-063:
-    host: sw-mtx-063.mtx.nbulabs.nvidia.com
+    host: sw-mtx-063.mtx.nbulabs.nvidia.com                    # 10.9.153.207
     host_user: root
     host_pass: 3tango
 
   sw-mtx-047:
-    host: sw-mtx-047.mtx.nbulabs.nvidia.com
+    host: sw-mtx-047.mtx.nbulabs.nvidia.com                    # 10.9.151.104
     host_user: root
     host_pass: 3tango
 
   sw-mtx-048:
-    host: sw-mtx-048.mtx.nbulabs.nvidia.com
+    host: sw-mtx-048.mtx.nbulabs.nvidia.com                    # 10.9.151.105
     host_user: root
     host_pass: 3tango

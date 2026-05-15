@@ -115,12 +115,6 @@ def build_parser() -> argparse.ArgumentParser:
         help="Skip the OS ISO download + HTTP-serve step.",
     )
     p.add_argument(
-        "--apply-time",
-        default="Immediate",
-        choices=["Immediate", "OnReset"],
-        help="Redfish OperationApplyTime for the firmware update.",
-    )
-    p.add_argument(
         "--no-progress",
         action="store_true",
         help="Disable tqdm progress bars (useful in CI logs).",
@@ -243,7 +237,6 @@ def _do_firmware(bench: config.Bench, args: argparse.Namespace, show_progress: b
             bmc_user=bench.bmc_user,
             bmc_pass=bench.bmc_pass,
             fwpkg_path=result.path,
-            apply_time=args.apply_time,
             show_progress=show_progress,
         )
     except redfish_fw.RedfishError as exc:
