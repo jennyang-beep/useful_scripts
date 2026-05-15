@@ -1,0 +1,71 @@
+# Bench inventory for the BF4 firmware + OS updater.
+#
+# Copy this file to benches.yaml (which is gitignored). The script looks
+# up bench keys against the mapping below from two CLI flags:
+#   --http_server_bench  : the bench whose host runs the local HTTP server
+#                          (its `host` is the URL advertised to the BMC).
+#                          Any entry with a `host` field is acceptable.
+#   --bf4                : the bench whose BMC receives the firmware update.
+#                          MUST be a BF4 entry (with bmc_host/user/pass).
+#
+# Two flavours of entry:
+#
+#   * BF4 bench  -- has both `host` and the `bmc_*` fields. Usable as
+#                   --bf4 and/or --http_server_bench.
+#   * Host-only  -- only `host` (+ optional host_user / host_pass).
+#                   Usable only as --http_server_bench.
+#
+# Required fields:
+#   host        : DNS name (preferred) or IP of the host
+#
+# BF4-only required fields:
+#   bmc_host    : DNS name (preferred) or IP of the BMC
+#   bmc_user    : BMC username
+#   bmc_pass    : BMC password
+#
+# Optional informational fields:
+#   host_fqdn   : alternate FQDN for the host (overrides `host` when present)
+#   bmc_fqdn    : alternate FQDN for the BMC  (overrides `bmc_host` when present)
+#   host_user   : SSH username for the host (not used by the script today)
+#   host_pass   : SSH password for the host (not used by the script today)
+
+benches:
+
+  # --- BF4 benches (have a connected BlueField-4) --------------------------
+
+  sw-mtx-perf-003-bf4:
+    # No FQDN known yet; replace with a DNS name when available.
+    host: sw-mtx-perf-003-bf4.mtx.nbulabs.nvidia.com             # BF4 Arm host
+    bmc_host: sw-mtx-perf-003-bf4-bmc.mtx.nbulabs.nvidia.com             # BF4 BMC
+    bmc_user: admin
+    bmc_pass: "Nvidia_12345!"
+
+  sw-mtx-062-bf4:
+    host: sw-mtx-062-bf4.mtx.nbulabs.nvidia.com           # 10.9.153.44
+    bmc_host: sw-mtx-062-bf4-bmc.mtx.nbulabs.nvidia.com   # 10.9.153.24
+    bmc_user: admin
+    bmc_pass: "Nvidia_12345!"
+
+  # --- Host-only servers (no BF4 attached) --------------------------------
+  # Useful as --http_server_bench when you want to host the ISO from one
+  # of these machines while updating a BF4 elsewhere.
+
+  sw-mtx-062:
+    host: sw-mtx-062.mtx.nbulabs.nvidia.com
+    host_user: root
+    host_pass: 3tango
+
+  sw-mtx-063:
+    host: sw-mtx-063.mtx.nbulabs.nvidia.com
+    host_user: root
+    host_pass: 3tango
+
+  sw-mtx-047:
+    host: sw-mtx-047.mtx.nbulabs.nvidia.com
+    host_user: root
+    host_pass: 3tango
+
+  sw-mtx-048:
+    host: sw-mtx-048.mtx.nbulabs.nvidia.com
+    host_user: root
+    host_pass: 3tango

@@ -1,0 +1,11 @@
+# Real bench config with credentials must never be committed.
+benches.yaml
+
+# Downloaded firmware packages and ISOs.
+downloads/
+
+# Python cache.
+__pycache__/
+*.pyc
+.venv/
+venv/
