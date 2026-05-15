@@ -48,6 +48,12 @@ benches:
     bmc_user: admin
     bmc_pass: "Nvidia_12345!"
 
+  sw-mtx-065-bf4:
+    host: sw-mtx-065-bf4.mtx.nbulabs.nvidia.com                # 10.9.153.45
+    bmc_host: sw-mtx-065-bf4-bmc.mtx.nbulabs.nvidia.com        # 10.9.153.46
+    bmc_user: admin
+    bmc_pass: "Nvidia_12345!"
+
   # --- Host-only servers (no BF4 attached) --------------------------------
   # Useful as --http_server_bench when you want to host the ISO from one
   # of these machines while updating a BF4 elsewhere.
@@ -64,6 +70,11 @@ benches:
 
   sw-mtx-063:
     host: sw-mtx-063.mtx.nbulabs.nvidia.com                    # 10.9.153.207
+    host_user: root
+    host_pass: 3tango
+
+  sw-mtx-065:
+    host: sw-mtx-065.mtx.nbulabs.nvidia.com                    # 10.9.153.211
     host_user: root
     host_pass: 3tango
 

@@ -21,8 +21,10 @@ bf4_updater/
   config.py              # benches.yaml loader / validator
   artifactory.py         # discover *.fwpkg in an Artifactory dir
   downloader.py          # resumable HTTP download w/ progress + sha256
-  redfish_fw.py          # multipart push to BMC + TaskService poll
+  redfish_fw.py          # multipart .fwpkg push to BMC + TaskService poll
+  redfish_account.py     # BMC AccountService (--first-install pwd rotation)
   iso_server.py          # local HTTP server for the ISO
+  host_ops.py            # SSH/paramiko host-side ops (--first-install burn)
   benches.example.yaml   # template (committed)
   benches.yaml           # real bench creds (gitignored, you create it)
   requirements.txt
@@ -58,6 +60,7 @@ BMC creds: `admin` / `Nvidia_12345!`.
 | ----------------------- | ---------------------------------------------------------------- | --------------------------------------------------------------------- |
 | `sw-mtx-perf-003-bf4`   | `sw-mtx-perf-003-bf4.mtx.nbulabs.nvidia.com` (`10.9.156.23`)     | `sw-mtx-perf-003-bf4-bmc.mtx.nbulabs.nvidia.com` (`10.9.156.24`)      |
 | `sw-mtx-062-bf4`        | `sw-mtx-062-bf4.mtx.nbulabs.nvidia.com` (`10.9.153.44`)          | `sw-mtx-062-bf4-bmc.mtx.nbulabs.nvidia.com` (`10.9.153.24`)           |
+| `sw-mtx-065-bf4`        | `sw-mtx-065-bf4.mtx.nbulabs.nvidia.com` (`10.9.153.45`)          | `sw-mtx-065-bf4-bmc.mtx.nbulabs.nvidia.com` (`10.9.153.46`)           |
 
 ### Host-only benches (no BF4 attached)
 
@@ -68,8 +71,10 @@ into them today).
 
 | Bench name      | Host                                                       |
 | --------------- | ---------------------------------------------------------- |
+| `sw-mtx-perf-003` | `sw-mtx-perf-003.mtx.nbulabs.nvidia.com` (`10.9.156.31`) |
 | `sw-mtx-062`    | `sw-mtx-062.mtx.nbulabs.nvidia.com` (`10.9.153.27`)        |
 | `sw-mtx-063`    | `sw-mtx-063.mtx.nbulabs.nvidia.com` (`10.9.153.207`)       |
+| `sw-mtx-065`    | `sw-mtx-065.mtx.nbulabs.nvidia.com` (`10.9.153.211`)       |
 | `sw-mtx-047`    | `sw-mtx-047.mtx.nbulabs.nvidia.com` (`10.9.151.104`)       |
 | `sw-mtx-048`    | `sw-mtx-048.mtx.nbulabs.nvidia.com` (`10.9.151.105`)       |
 
@@ -140,6 +145,70 @@ python update_bf4.py --bf4 sw-mtx-perf-003-bf4 \
   --pldm-url https://urm.nvidia.com/artifactory/.../MT_0000001775-01/ \
   --skip-os
 ```
+
+### First-time install on a brand-new BF4 (`--first-install`)
+
+For a BF4 that has *no* DPU-personality firmware yet and whose BMC is
+still on the factory `service` / `0penBmc` credentials (e.g.
+`sw-mtx-065-bf4`), add `--first-install` plus the URL of the
+DPU-personality `.bin`. The script also needs to know which **x86
+host** has the BF4 PCIe card so it can SSH there to run `flint b`;
+by default this is auto-derived from `--bf4` by stripping the
+`-bf4` suffix (`sw-mtx-065-bf4` → `sw-mtx-065`). Override with
+`--first-install-host` if your bench is named differently.
+
+```bash
+python update_bf4.py \
+  --bf4               sw-mtx-065-bf4 \
+  --http_server_bench sw-mtx-065 \
+  --first-install \
+  --host-fw-url http://nbu-nfs.mellanox.com/auto/mswg/release/host_fw/fw-4133/fw-4133-rel-82_48_1310-build-001/etc/bin/fw-ConnectX9-rel-82_48_1310-900-9D4B4-00CW-AAA_DPU_Ax-NVME-20.5.1-UEFI-21.4.13-UEFI-22.4.14-UEFI-14.41.14-FlexBoot-3.9.101.bin \
+  --pldm-url https://urm.nvidia.com/artifactory/.../MT_0000001775-01/ \
+  --iso-url  https://nbu-nfs.gtm.nvidia.com/.../bf4-os-doca-bundle-...iso
+```
+
+What the script does, in order:
+
+1. **Burn host (SSH, paramiko)** — connects to the burn-host bench
+   (`sw-mtx-065` in the example above; the x86 server that has the BF4
+   PCIe card) using its `host_user` / `host_pass` from
+   `benches.yaml`, then runs the same commands you'd run by hand:
+
+   ```bash
+   mkdir -p ~/jenny && cd ~/jenny
+   wget --no-clobber <--host-fw-url>
+   flint -d /dev/mst/mt4133_pciconf0 -i <bin> b
+   ```
+
+   Override the workdir / MST device with `--host-workdir` and
+   `--mst-device` if your bench differs.
+
+2. **Power cycle** — pauses with a banner asking you to power-cycle
+   the burn host (the new firmware doesn't take effect until then).
+   Type `done` at the prompt to continue, `abort` to stop.
+
+3. **BMC password rotation** — talks to the BMC over Redfish using
+   the default `service` / `0penBmc` credentials (`--default-bmc-user`
+   / `--default-bmc-pass` if your BMC differs) and PATCHes
+   `/redfish/v1/AccountService/Accounts/<user>` for each account in
+   `--first-install-rotate-users` (default: `service,root`) plus the
+   bench's configured `bmc_user`. New password = the bench's
+   `bmc_pass` (`Nvidia_12345!`). Accounts that don't exist (404) are
+   logged and skipped; the others are rotated and verified.
+
+4. **Verification** — does a final GET against the BMC using the
+   bench's `bmc_user` + `bmc_pass` so you know the fwpkg push will
+   authenticate.
+
+5. **Regular fwpkg push** — exactly the same `_do_firmware` flow as a
+   normal update, now using the freshly-rotated password.
+
+6. **OS ISO staging** — exactly the same `_do_os` flow.
+
+`--first-install` is incompatible with `--skip-firmware` (since
+the host-burn + password-rotation only make sense as a prelude to the
+fwpkg push). It can still be combined with `--skip-os` if you only
+want to provision the firmware side.
 
 ### ISO only — just stage and serve (no `--bf4` needed)
 
