@@ -1,14 +1,15 @@
 # bf4_updater
 
-Small Python CLI to:
+Small Python CLI with two modes, selected per invocation by `--mode`:
 
-1. Download a BlueField-4 PLDM `.fwpkg` from an Artifactory directory URL
-   and push it to the BF4 **BMC** via Redfish `UpdateService`, then
-   wait for the firmware update task to finish.
-2. Download a DOCA OS `.iso` from a direct URL, serve it over HTTP from
-   the runner machine, and verify the published URL is reachable. The
-   actual OS install on the BF4 is then performed manually (e.g. via
-   the BMC's virtual-media UI pointed at the printed URL).
+1. **`--mode fwpkg`** — download a BlueField-4 PLDM `.fwpkg` from an
+   Artifactory directory URL and push it to the BF4 **BMC** via Redfish
+   `UpdateService`, then wait for the firmware update task to finish.
+2. **`--mode os`** — download a DOCA OS `.iso` from a direct URL, serve
+   it over HTTP from a lab bench, and verify the published URL is
+   reachable. The actual OS install on the BF4 is then performed
+   manually (e.g. via the BMC's virtual-media UI pointed at the
+   printed URL).
 
 Designed to run on a dedicated lab runner that has network access both
 to Artifactory / the ISO mirror and to the BF4 BMC(s).
@@ -22,9 +23,7 @@ bf4_updater/
   artifactory.py         # discover *.fwpkg in an Artifactory dir
   downloader.py          # resumable HTTP download w/ progress + sha256
   redfish_fw.py          # multipart .fwpkg push to BMC + TaskService poll
-  redfish_account.py     # BMC AccountService (--first-install pwd rotation)
   iso_server.py          # local HTTP server for the ISO
-  host_ops.py            # SSH/paramiko host-side ops (--first-install burn)
   benches.example.yaml   # template (committed)
   benches.yaml           # real bench creds (gitignored, you create it)
   requirements.txt
@@ -98,19 +97,21 @@ Optional:
 - `host_user`, `host_pass` — SSH login info for the host
   (informational; not used by the script today).
 
-## Two CLI roles
+## CLI shape
 
-Each invocation works with up to two benches, both resolved from
-`benches.yaml`:
+Each invocation runs exactly one mode, selected by `--mode`:
 
-- `--bf4 <bench>` — whose **BMC** receives the firmware update.
-- `--http_server_bench <bench>` — whose **host** runs the local HTTP
-  server (its `host` / `host_fqdn` is the URL the BMC will reach for
-  the ISO).
+| Mode             | Required flags                              | What it does                                                                 |
+| ---------------- | ------------------------------------------- | ---------------------------------------------------------------------------- |
+| `--mode fwpkg`   | `--bf4 <bench>` + `--pldm-url <url>`        | Push `.fwpkg` from Artifactory to the BF4's BMC via Redfish `UpdateService`. |
+| `--mode os`      | `--http_server_bench <bench>` + `--iso-url` | Download the DOCA OS `.iso` and serve it over HTTP from the named bench.     |
 
-The two flags can name the same bench (when the BF4 you're updating is
-also the one serving the ISO) or different benches (run the HTTP
-server on bench A, update bench B).
+`--bf4 <bench>` names the bench whose **BMC** receives the firmware
+update. `--http_server_bench <bench>` names the bench whose **host**
+runs the local HTTP server (its `host` / `host_fqdn` is the URL the
+BMC will reach for the ISO). The two roles can point at the same bench
+across separate `--mode fwpkg` and `--mode os` runs, or at different
+benches (e.g. serve the ISO from bench A, update bench B's firmware).
 
 ## Usage
 
@@ -118,104 +119,55 @@ server on bench A, update bench B).
 python update_bf4.py --help
 ```
 
-### Full update — same bench serves the ISO and gets the firmware
+### Firmware update (`--mode fwpkg`)
+
+`urm.nvidia.com` does **not** allow anonymous access, so you must supply
+an Artifactory credential or the directory listing fails with `403`.
+Generate an **identity token** at <https://urm.nvidia.com> (log in with
+SSO → click your name → *Edit Profile* / *Generate an Identity Token*),
+then either export it or pass it on the command line:
+
+```bash
+export ARTIFACTORY_TOKEN=<your-identity-token>   # sent as a Bearer token
+```
+
+Other accepted env vars: `ARTIFACTORY_API_KEY` (sent as `X-JFrog-Art-Api`)
+or `ARTIFACTORY_USER` + `ARTIFACTORY_PASSWORD` (HTTP basic; the password
+may be an identity token / API key).
 
 ```bash
 python update_bf4.py \
-  --bf4               sw-mtx-perf-003-bf4 \
+  --mode fwpkg \
+  --bf4      sw-mtx-perf-003-bf4 \
+  --pldm-url https://urm.nvidia.com/artifactory/sw-mlnx-bluefield-generic/bluefield4/PLDM/20260510/Dev/MT_0000001775-01/
+```
+
+Or pass the token inline instead of exporting it:
+
+```bash
+python update_bf4.py \
+  --mode fwpkg \
+  --artifactory-token <your-identity-token> \
+  --bf4      sw-mtx-perf-003-bf4 \
+  --pldm-url https://urm.nvidia.com/artifactory/sw-mlnx-bluefield-generic/bluefield4/PLDM/20260510/Dev/MT_0000001775-01/
+```
+
+### OS ISO staging (`--mode os`) — serve from the same bench
+
+```bash
+python update_bf4.py \
+  --mode os \
   --http_server_bench sw-mtx-perf-003-bf4 \
-  --pldm-url https://urm.nvidia.com/artifactory/sw-mlnx-bluefield-generic/bluefield4/PLDM/20260510/Dev/MT_0000001775-01/ \
-  --iso-url  https://nbu-nfs.gtm.nvidia.com/auto/sw_mc_soc_release/doca_dpu/doca_3.3_bf4/20260511/ISO/bf4-os-doca-bundle-3.3.0-335_26.01_ubuntu-24.04_64k.iso
+  --iso-url https://nbu-nfs.gtm.nvidia.com/auto/sw_mc_soc_release/doca_dpu/doca_3.3_bf4/20260511/ISO/bf4-os-doca-bundle-3.3.0-335_26.01_ubuntu-24.04_64k.iso
 ```
 
-### Cross-bench — host `sw-mtx-047` hosts the ISO, BF4 `003` is updated
+### OS ISO staging (`--mode os`) — serve from a different bench
 
 ```bash
 python update_bf4.py \
-  --bf4               sw-mtx-perf-003-bf4 \
+  --mode os \
   --http_server_bench sw-mtx-047 \
-  --pldm-url https://urm.nvidia.com/artifactory/sw-mlnx-bluefield-generic/bluefield4/PLDM/20260510/Dev/MT_0000001775-01/ \
-  --iso-url  https://nbu-nfs.gtm.nvidia.com/auto/sw_mc_soc_release/doca_dpu/doca_3.3_bf4/20260511/ISO/bf4-os-doca-bundle-3.3.0-335_26.01_ubuntu-24.04_64k.iso
-```
-
-### Firmware only (no `--http_server_bench` needed)
-
-```bash
-python update_bf4.py --bf4 sw-mtx-perf-003-bf4 \
-  --pldm-url https://urm.nvidia.com/artifactory/.../MT_0000001775-01/ \
-  --skip-os
-```
-
-### First-time install on a brand-new BF4 (`--first-install`)
-
-For a BF4 that has *no* DPU-personality firmware yet and whose BMC is
-still on the factory `service` / `0penBmc` credentials (e.g.
-`sw-mtx-065-bf4`), add `--first-install` plus the URL of the
-DPU-personality `.bin`. The script also needs to know which **x86
-host** has the BF4 PCIe card so it can SSH there to run `flint b`;
-by default this is auto-derived from `--bf4` by stripping the
-`-bf4` suffix (`sw-mtx-065-bf4` → `sw-mtx-065`). Override with
-`--first-install-host` if your bench is named differently.
-
-```bash
-python update_bf4.py \
-  --bf4               sw-mtx-065-bf4 \
-  --http_server_bench sw-mtx-065 \
-  --first-install \
-  --host-fw-url http://nbu-nfs.mellanox.com/auto/mswg/release/host_fw/fw-4133/fw-4133-rel-82_48_1310-build-001/etc/bin/fw-ConnectX9-rel-82_48_1310-900-9D4B4-00CW-AAA_DPU_Ax-NVME-20.5.1-UEFI-21.4.13-UEFI-22.4.14-UEFI-14.41.14-FlexBoot-3.9.101.bin \
-  --pldm-url https://urm.nvidia.com/artifactory/.../MT_0000001775-01/ \
-  --iso-url  https://nbu-nfs.gtm.nvidia.com/.../bf4-os-doca-bundle-...iso
-```
-
-What the script does, in order:
-
-1. **Burn host (SSH, paramiko)** — connects to the burn-host bench
-   (`sw-mtx-065` in the example above; the x86 server that has the BF4
-   PCIe card) using its `host_user` / `host_pass` from
-   `benches.yaml`, then runs the same commands you'd run by hand:
-
-   ```bash
-   mkdir -p ~/jenny && cd ~/jenny
-   wget --no-clobber <--host-fw-url>
-   flint -d /dev/mst/mt4133_pciconf0 -i <bin> b
-   ```
-
-   Override the workdir / MST device with `--host-workdir` and
-   `--mst-device` if your bench differs.
-
-2. **Power cycle** — pauses with a banner asking you to power-cycle
-   the burn host (the new firmware doesn't take effect until then).
-   Type `done` at the prompt to continue, `abort` to stop.
-
-3. **BMC password rotation** — talks to the BMC over Redfish using
-   the default `service` / `0penBmc` credentials (`--default-bmc-user`
-   / `--default-bmc-pass` if your BMC differs) and PATCHes
-   `/redfish/v1/AccountService/Accounts/<user>` for each account in
-   `--first-install-rotate-users` (default: `service,root`) plus the
-   bench's configured `bmc_user`. New password = the bench's
-   `bmc_pass` (`Nvidia_12345!`). Accounts that don't exist (404) are
-   logged and skipped; the others are rotated and verified.
-
-4. **Verification** — does a final GET against the BMC using the
-   bench's `bmc_user` + `bmc_pass` so you know the fwpkg push will
-   authenticate.
-
-5. **Regular fwpkg push** — exactly the same `_do_firmware` flow as a
-   normal update, now using the freshly-rotated password.
-
-6. **OS ISO staging** — exactly the same `_do_os` flow.
-
-`--first-install` is incompatible with `--skip-firmware` (since
-the host-burn + password-rotation only make sense as a prelude to the
-fwpkg push). It can still be combined with `--skip-os` if you only
-want to provision the firmware side.
-
-### ISO only — just stage and serve (no `--bf4` needed)
-
-```bash
-python update_bf4.py --http_server_bench sw-mtx-perf-003-bf4 \
-  --iso-url https://nbu-nfs.gtm.nvidia.com/.../bf4-os-doca-bundle-3.3.0-335_26.01_ubuntu-24.04_64k.iso \
-  --skip-firmware
+  --iso-url https://nbu-nfs.gtm.nvidia.com/auto/sw_mc_soc_release/doca_dpu/doca_3.3_bf4/20260511/ISO/bf4-os-doca-bundle-3.3.0-335_26.01_ubuntu-24.04_64k.iso
 ```
 
 The script downloads the ISO into `downloads/iso/`, starts an HTTP
@@ -263,7 +215,9 @@ Press `Ctrl+C` when done to stop the HTTP server.
 - TLS verification against the BMC is **disabled** (lab self-signed
   certs); a one-time warning is logged. Verification against
   Artifactory and the ISO mirror is **on**.
-- Credentials live only in `benches.yaml` and are never logged.
+- BMC credentials live only in `benches.yaml`; the Artifactory token
+  comes from `--artifactory-token` or the `ARTIFACTORY_*` env vars.
+  Neither is ever logged.
 - The downloader skips re-downloading files that are already present
   with the right size (and sha256 if known), so re-running the script
   is cheap.
