@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import json
 import logging
+import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -51,6 +52,11 @@ _TLS_WARNED = False
 
 TERMINAL_STATES = {"Completed", "Exception", "Killed", "Cancelled", "Interrupted"}
 SUCCESS_STATES = {"Completed"}
+
+# How many consecutive 404s on the task URI before we give up. A completed
+# task usually lingers (CompletedTaskOverWritePolicy=Oldest), so a 404 means
+# either it was reaped or we polled the wrong URI.
+MAX_TASK_NOT_FOUND = 3
 
 
 class RedfishError(Exception):
@@ -156,14 +162,20 @@ def _post_multipart(
             f"Firmware POST failed: HTTP {resp.status_code}\n{_safe_body(resp)}"
         )
 
-    task_uri = resp.headers.get("Location")
-    if not task_uri:
-        # Some implementations return the Task in the body instead.
-        try:
-            body = resp.json()
-            task_uri = body.get("@odata.id")
-        except ValueError:
-            task_uri = None
+    # Prefer the Task resource (@odata.id in the body) over the Location
+    # header. On BlueField the Location points at the TaskMonitor
+    # (.../Tasks/<id>/Monitor), which does NOT expose TaskState /
+    # PercentComplete / Messages, so polling it spins until timeout.
+    # Strip a trailing /Monitor as a safety net if we fall back to Location.
+    odata_id = None
+    try:
+        odata_id = resp.json().get("@odata.id")
+    except ValueError:
+        odata_id = None
+
+    task_uri = odata_id or resp.headers.get("Location")
+    if task_uri:
+        task_uri = _strip_monitor(task_uri)
 
     if not task_uri:
         raise RedfishError(
@@ -172,6 +184,14 @@ def _post_multipart(
         )
 
     return task_uri
+
+
+def _strip_monitor(uri: str) -> str:
+    """Turn a TaskMonitor URI (.../Tasks/<id>/Monitor) into the Task URI."""
+    trimmed = uri.rstrip("/")
+    if trimmed.endswith("/Monitor"):
+        return trimmed[: -len("/Monitor")]
+    return uri
 
 
 def _poll_task(
@@ -184,12 +204,29 @@ def _poll_task(
     full_uri = task_uri if task_uri.startswith("http") else urljoin(base_url, task_uri)
     deadline = time.monotonic() + overall_timeout
     last_percent = -1
+    not_found = 0
 
     while True:
         try:
             resp = session.get(full_uri, timeout=(15, 60))
+            if resp.status_code == 404:
+                not_found += 1
+                log.warning(
+                    "Task %s returned 404 (%d/%d); it may have completed and "
+                    "been reaped by the BMC.",
+                    _short_task_id(full_uri), not_found, MAX_TASK_NOT_FOUND,
+                )
+                if not_found >= MAX_TASK_NOT_FOUND:
+                    raise RedfishError(
+                        f"Task {full_uri} vanished (404) before a terminal "
+                        f"state was observed. The update may have completed; "
+                        f"verify via FirmwareInventory."
+                    )
+                time.sleep(poll_interval)
+                continue
             resp.raise_for_status()
             body = resp.json()
+            not_found = 0
         except (requests.RequestException, ValueError) as exc:
             log.warning("Task poll failed (will retry): %s", exc)
             body = {}
@@ -215,12 +252,14 @@ def _poll_task(
             )
             if state not in SUCCESS_STATES or (status and status not in ("OK", "Ok")):
                 _log_messages(messages)
+                _print_task_log(result)
                 raise RedfishError(
                     f"Firmware task ended in state={state} status={status}. "
                     f"See log for Redfish messages."
                 )
             log.info("Firmware update completed successfully (%s).", status or "OK")
             _log_messages(messages, level=logging.INFO)
+            _print_task_log(result)
             return result
 
         if time.monotonic() > deadline:
@@ -274,7 +313,49 @@ def _log_messages(messages, level: int = logging.WARNING) -> None:
         msg_id = m.get("MessageId", "?")
         text = m.get("Message", "")
         sev = m.get("Severity") or m.get("MessageSeverity") or "?"
-        log.log(level, "  Redfish msg: [%s] %s -- %s", sev, msg_id, text)
+        resolution = (m.get("Resolution") or "").strip()
+        if resolution and resolution not in ("None.", "None"):
+            log.log(level, "  Redfish msg: [%s] %s -- %s  (Resolution: %s)",
+                    sev, msg_id, text, resolution)
+        else:
+            log.log(level, "  Redfish msg: [%s] %s -- %s", sev, msg_id, text)
+
+
+def _print_task_log(result: "TaskResult") -> None:
+    """Print a human-readable summary of the task's Messages once it ends.
+
+    Highlights which components were updated and what activation action
+    (e.g. AC/DC power cycle, system reboot) each one still needs, parsed
+    from the BMC's ``Update.1.0.*`` messages.
+    """
+    updated = []        # (device, image)
+    activations = {}    # device -> resolution (power-cycle instructions)
+    for m in result.messages:
+        msg_id = m.get("MessageId", "")
+        args = m.get("MessageArgs") or []
+        if msg_id == "Update.1.0.UpdateSuccessful" and len(args) >= 2:
+            updated.append((args[0], args[1]))
+        elif msg_id == "Update.1.0.AwaitToActivate" and len(args) >= 2:
+            # args: [image, device]; Resolution holds the activation action.
+            activations[args[1]] = (m.get("Resolution") or "").strip()
+
+    sys.stderr.flush()
+    bar = "=" * 60
+    print()
+    print(bar)
+    print(f"  Firmware task {result.task_id}: {result.state} "
+          f"({result.status or '?'}), {result.percent if result.percent is not None else '?'}%")
+    if updated:
+        print("  Components updated:")
+        for device, image in updated:
+            print(f"    - {device}: {image}")
+    if activations:
+        print("  Activation required (staged, not yet live):")
+        for device, action in activations.items():
+            print(f"    - {device}: {action or 'power cycle'}")
+        print("  >>> Power-cycle / reboot the BF4 to activate the new firmware.")
+    print(bar)
+    print(flush=True)
 
 
 def _warn_tls_once() -> None:
