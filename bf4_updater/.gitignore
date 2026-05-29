@@ -1,6 +1,9 @@
 # Real bench config with credentials must never be committed.
 benches.yaml
 
+# Artifactory identity token (urm.nvidia.com).
+.artifactory_token
+
 # Downloaded firmware packages and ISOs.
 downloads/
 

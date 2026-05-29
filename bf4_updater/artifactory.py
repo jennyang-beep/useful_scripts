@@ -13,6 +13,7 @@ the JSON, and pick the single file that ends in ``.fwpkg``.
 from __future__ import annotations
 
 import logging
+import os
 from dataclasses import dataclass
 from typing import List, Optional
 from urllib.parse import urlparse, urlunparse
@@ -27,6 +28,57 @@ log = logging.getLogger(__name__)
 
 class ArtifactoryError(Exception):
     """Raised when the Artifactory listing fails or no fwpkg can be picked."""
+
+
+def _token_from_file() -> Optional[str]:
+    """Read the gitignored ``.artifactory_token`` next to this module."""
+    from pathlib import Path
+
+    try:
+        path = Path(__file__).resolve().parent / ".artifactory_token"
+        if path.exists():
+            return path.read_text().strip() or None
+    except OSError:
+        pass
+    return None
+
+
+def apply_auth(session: requests.Session, *, token: Optional[str] = None) -> bool:
+    """Attach Artifactory credentials to ``session`` from a token or env vars.
+
+    Resolution order (first match wins):
+
+      1. ``token`` argument (e.g. from ``--artifactory-token``) -> Bearer.
+      2. ``ARTIFACTORY_TOKEN`` env var -> Bearer access/identity token.
+      3. ``.artifactory_token`` file next to this module -> Bearer.
+      4. ``ARTIFACTORY_API_KEY`` env var -> ``X-JFrog-Art-Api`` header.
+      5. ``ARTIFACTORY_USER`` + ``ARTIFACTORY_PASSWORD`` env vars -> HTTP
+         basic auth (password may be an identity token / API key).
+
+    Returns ``True`` if any credential was applied, ``False`` otherwise
+    (anonymous access, which urm.nvidia.com rejects with 403).
+    """
+
+    bearer = token or os.environ.get("ARTIFACTORY_TOKEN") or _token_from_file()
+    if bearer:
+        session.headers["Authorization"] = f"Bearer {bearer}"
+        log.debug("Artifactory auth: Bearer token")
+        return True
+
+    api_key = os.environ.get("ARTIFACTORY_API_KEY")
+    if api_key:
+        session.headers["X-JFrog-Art-Api"] = api_key
+        log.debug("Artifactory auth: X-JFrog-Art-Api key")
+        return True
+
+    user = os.environ.get("ARTIFACTORY_USER")
+    password = os.environ.get("ARTIFACTORY_PASSWORD")
+    if user and password:
+        session.auth = (user, password)
+        log.debug("Artifactory auth: HTTP basic (user=%s)", user)
+        return True
+
+    return False
 
 
 @dataclass(frozen=True)
